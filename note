@@ -1,0 +1,2510 @@
+week03
+---
+title: "Lab 03 - DNS & Socket Programming"
+date: 2020-03-13T11:02:27+11:00
+
+hiddenFromHomePage: false
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams: 
+  enable: false
+  options: ""
+
+---
+
+
+# Explore DNS records
+
+> DNS servers use different record types for different purposes. For each type of DNS record, there is an associated type of DNS query. Check the following page ( https://en.wikipedia.org/wiki/List_of_DNS_record_types ) and find out what the following resource record types are used for:  
+* A  
+* CNAME  
+* MX  
+* NS  
+* PTR  
+* SOA  
+
+* `A` record - Domain -> IPv4 Address
+* `CNAME` - Canonical Name - Alias to another name  
+* `MX` - Mail Exchange - Map domain names to MTAs
+* `NS` - Name Server - For subdomain DNS resolving
+* `PTR` - Pointer - Like the alias, but doesn't keep trying to resolve -> Used for Reverse DNS
+* `SOA` - Start Of Authority - Authoritative information.
+
+<!-- ---
+
+|TYPE|EXAMPLE|
+|:--|:--|
+|A|example.com A 1400 IN 192.168.1.1|
+|CNAME|ftp.example CNAME 1400 IN example.com| -->
+
+
+# Tracing DNS with Wireshark
+
+![](Screenshot from 2020-03-13 11-13-06.png)
+
+File: [dns-ethereal-trace-2](./dns-ethereal-trace-2)
+
+## What transport layer protocol is being used by the DNS messages?
+
+UDP (User Datagram Protocol)
+
+**Why?**  
+Don't need reliability, and also need performance
+
+## What is the source and destination port for the DNS query message and the corresponding response? 
+
+Query: Source `3742` | Dest `53`  
+Response: Source `53` | Dest `3742`
+
+## To what IP address is the DNS query message sent? Is this the same as the default local DNS server?
+
+`128.238.29.22`
+
+Yes, it is the same IP.
+
+## How many &apos;questions&apos; are contained in the DNS query message? What &apos;Type&apos; of DNS queries are they? Does the query message also contain any &apos;answers&apos;? 
+
+One. `www.mit.edu: type A, class IN`.  
+No answers in the query.
+
+# Examine the DNS response message. Provide details of the contents of the &apos;Answers&apos;, &apos;Authority&apos; and &apos;Additional Information&apos; fields. What can you infer from these? 
+
+Answer: `www.mit.edu: type A, class IN, addr 18.7.22.83`
+
+Authoritive Nameservers  
+
+* `mit.edu: type NS, class IN, ns BITSY.mit.edu`
+* `mit.edu: type NS, class IN, ns STRAWB.mit.edu`
+* `mit.edu: type NS, class IN, ns W20NS.mit.edu`
+
+Additional Records
+
+* `BITSY.mit.edu: type A, class IN, addr 18.72.0.3`
+* `STRAWB.mit.edu: type A, class IN, addr 18.71.0.151`
+* `W20NS.mit.edu: type A, class IN, addr 18.70.0.160`
+
+`www.mit.edu` points to the address `18.7.22.83`.  
+There are three nameservers which handle the (sub)domain names for `mit.edu` - `BITSY` (`18.72.0.3`), `STRAWB` (`18.71.0.151`) and `W20NS` (`18.70.0.160`).
+
+# Digging into DNS
+
+## What is the IP address of www.cecs.anu.edu.au? What type of DNS query is sent to get this answer?
+
+```
+$> dig www.cecs.anu.edu.au
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> www.cecs.anu.edu.au
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 42848
+;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 4, ADDITIONAL: 9
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;www.cecs.anu.edu.au.           IN      A
+
+;; ANSWER SECTION:
+www.cecs.anu.edu.au.    1518    IN      CNAME   rproxy.cecs.anu.edu.au.
+rproxy.cecs.anu.edu.au. 1518    IN      A       150.203.161.98
+
+;; AUTHORITY SECTION:
+edu.au.                 238     IN      NS      q.au.
+edu.au.                 238     IN      NS      t.au.
+edu.au.                 238     IN      NS      s.au.
+edu.au.                 238     IN      NS      r.au.
+
+;; ADDITIONAL SECTION:
+q.au.                   21726   IN      A       65.22.196.1
+q.au.                   11497   IN      AAAA    2a01:8840:be::1
+r.au.                   27461   IN      A       65.22.197.1
+r.au.                   126705  IN      AAAA    2a01:8840:bf::1
+s.au.                   37577   IN      A       65.22.198.1
+s.au.                   20725   IN      AAAA    2a01:8840:c0::1
+t.au.                   12598   IN      A       65.22.199.1
+t.au.                   7678    IN      AAAA    2a01:8840:c1::1
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 11:53:49 AEDT 2020
+;; MSG SIZE  rcvd: 325
+```
+
+`www.cecs.anu.edu.au` points to `150.203.161.98`. An `A` record DNS query is sent to get this answer.
+
+We can confirm this result with a `ping`, as seen below
+
+```
+$> ping www.cecs.anu.edu.au -c 1
+PING rproxy.cecs.anu.edu.au (150.203.161.98) 56(84) bytes of data.
+64 bytes from rproxy.cecs.anu.edu.au (150.203.161.98): icmp_seq=1 ttl=52 time=6.40 ms
+
+--- rproxy.cecs.anu.edu.au ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 6.408/6.408/6.408/0.000 ms
+```
+
+## What is the canonical name for the CECS ANU web server? Suggest a reason for having an alias for this server. 
+
+```
+$> dig www.cecs.anu.edu.au CNAME
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> www.cecs.anu.edu.au CNAME
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 64945
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 3, ADDITIONAL: 4
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;www.cecs.anu.edu.au.           IN      CNAME
+
+;; ANSWER SECTION:
+www.cecs.anu.edu.au.    1359    IN      CNAME   rproxy.cecs.anu.edu.au.
+
+;; AUTHORITY SECTION:
+anu.edu.au.             53      IN      NS      ns.adelaide.edu.au.
+anu.edu.au.             53      IN      NS      una.anu.edu.au.
+anu.edu.au.             53      IN      NS      ns1.anu.edu.au.
+
+;; ADDITIONAL SECTION:
+ns.adelaide.edu.au.     2480    IN      A       129.127.40.3
+ns1.anu.edu.au.         778     IN      A       150.203.1.10
+una.anu.edu.au.         53      IN      A       150.203.22.28
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 11:56:28 AEDT 2020
+;; MSG SIZE  rcvd: 179
+```
+
+`www.cecs.anu.edu.au` is a `CNAME` to `rproxy.cecs.anu.edu.au`.
+
+Canonical names and aliases are useful for maintainability, as only `rproxy.cecs.anu.edu.au` will need to have an `A` record assigned.  
+Therefore if the IP address of the server machine changes, only one record will need to be updated.
+
+## What can you make of the rest of the response (i.e. the details available in the Authority and Additional sections)? 
+
+
+```
+edu.au.                 238     IN      NS      q.au.
+edu.au.                 238     IN      NS      t.au.
+edu.au.                 238     IN      NS      s.au.
+edu.au.                 238     IN      NS      r.au.
+```
+
+The Authority section notes that the name servers at `q.au`, `t.au`, `s.au` and `r.au` are responsible for DNS queries of the subdomains of `edu.au`
+
+---
+
+```
+anu.edu.au.             53      IN      NS      ns.adelaide.edu.au.
+anu.edu.au.             53      IN      NS      una.anu.edu.au.
+anu.edu.au.             53      IN      NS      ns1.anu.edu.au.
+```
+
+Subdomain records for ANU are managed by `ns.adelaide.edu.au`, `una.anu.edu.au` and `ns1.anu.edu.au`.
+
+Their IPv4 and IPv6 addresses are shown in the previous dig command output.
+
+## What is the IP address of the local nameserver for your machine? 
+
+`129.94.242.2`
+
+## What are the DNS nameservers for the &apos;cecs.anu.edu.au&apos; domain (note: the domain name is cecs.anu.edu.au and not www.cecs.anu.edu.au )? Find out their IP addresses? What type of DNS query is sent to obtain this information? 
+
+```
+$> dig cecs.anu.edu.au NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> cecs.anu.edu.au NS
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 37725
+;; flags: qr rd ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 7
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;cecs.anu.edu.au.               IN      NS
+
+;; ANSWER SECTION:
+cecs.anu.edu.au.        299     IN      NS      ns4.cecs.anu.edu.au.
+cecs.anu.edu.au.        299     IN      NS      ns3.cecs.anu.edu.au.
+cecs.anu.edu.au.        299     IN      NS      ns2.cecs.anu.edu.au.
+
+;; ADDITIONAL SECTION:
+ns2.cecs.anu.edu.au.    299     IN      A       150.203.161.36
+ns2.cecs.anu.edu.au.    500     IN      AAAA    2001:388:1034:2905::24
+ns3.cecs.anu.edu.au.    299     IN      A       150.203.161.50
+ns3.cecs.anu.edu.au.    500     IN      AAAA    2001:388:1034:2905::32
+ns4.cecs.anu.edu.au.    299     IN      A       150.203.161.38
+ns4.cecs.anu.edu.au.    500     IN      AAAA    2001:388:1034:2905::26
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 12:02:58 AEDT 2020
+;; MSG SIZE  rcvd: 230
+```
+
+_Ignoring IPv6 / AAAA records..._  
+The nameservers for `cecs.anu.edu.au` are `ns2.cecs.anu.edu.au` (`150.203.161.36`), `ns3.cecs.anu.edu.au` (`150.203.161.50`) and `ns3.cecs.anu.edu.au` (`150.203.161.38`).
+
+An `NS` query was sent to obtain this information
+
+## What is the DNS name associated with the IP address 111.68.101.54? What type of DNS query is sent to obtain this information? 
+
+```
+$> dig -x 111.68.101.54
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> -x 111.68.101.54
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 58962
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 2, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;54.101.68.111.in-addr.arpa.    IN      PTR
+
+;; ANSWER SECTION:
+54.101.68.111.in-addr.arpa. 1213 IN     PTR     webserver.seecs.nust.edu.pk.
+
+;; AUTHORITY SECTION:
+101.68.111.in-addr.arpa. 22072  IN      NS      ns2.hec.gov.pk.
+101.68.111.in-addr.arpa. 22072  IN      NS      ns1.hec.gov.pk.
+
+;; ADDITIONAL SECTION:
+ns1.hec.gov.pk.         1212    IN      A       103.4.93.5
+ns2.hec.gov.pk.         1212    IN      A       103.4.93.6
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 12:05:18 AEDT 2020
+;; MSG SIZE  rcvd: 172
+```
+
+`111.68.101.54` points to `webserver.seecs.nust.edu.pk`.
+
+A `PTR` query (Reverse DNS lookup) was sent to obtain this information.
+
+## Run dig and query the CSE nameserver (129.94.242.33) for the mail servers for Yahoo! Mail (again the domain name is yahoo.com, not www.yahoo.com ). Did you get an authoritative answer? Why?  
+
+_HINT: Just because a response contains information in the authoritative part of the DNS response message does not mean it came from an authoritative name server. You should examine the flags in the response to determine the answer_
+
+```
+$> dig @129.94.242.33 yahoo.com MX
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @129.94.242.33 yahoo.com MX
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 38935
+;; flags: qr rd ra; QUERY: 1, ANSWER: 3, AUTHORITY: 5, ADDITIONAL: 10
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;yahoo.com.                     IN      MX
+
+;; ANSWER SECTION:
+yahoo.com.              1122    IN      MX      1 mta6.am0.yahoodns.net.
+yahoo.com.              1122    IN      MX      1 mta7.am0.yahoodns.net.
+yahoo.com.              1122    IN      MX      1 mta5.am0.yahoodns.net.
+
+;; AUTHORITY SECTION:
+yahoo.com.              8763    IN      NS      ns3.yahoo.com.
+yahoo.com.              8763    IN      NS      ns5.yahoo.com.
+yahoo.com.              8763    IN      NS      ns2.yahoo.com.
+yahoo.com.              8763    IN      NS      ns4.yahoo.com.
+yahoo.com.              8763    IN      NS      ns1.yahoo.com.
+
+;; ADDITIONAL SECTION:
+ns1.yahoo.com.          428328  IN      A       68.180.131.16
+ns1.yahoo.com.          27501   IN      AAAA    2001:4998:130::1001
+ns2.yahoo.com.          384130  IN      A       68.142.255.16
+ns2.yahoo.com.          62254   IN      AAAA    2001:4998:140::1002
+ns3.yahoo.com.          311     IN      A       27.123.42.42
+ns3.yahoo.com.          186     IN      AAAA    2406:8600:f03f:1f8::1003
+ns4.yahoo.com.          529675  IN      A       98.138.11.157
+ns5.yahoo.com.          9135    IN      A       202.165.97.53
+ns5.yahoo.com.          62254   IN      AAAA    2406:2000:ff60::53
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.33#53(129.94.242.33)
+;; WHEN: Fri Mar 13 12:07:10 AEDT 2020
+;; MSG SIZE  rcvd: 399
+```
+
+The mail servers are `mta5.am0.yahoodns.net`, `mta6.am0.yahoodns.net`, and `mta7.am0.yahoodns.net`.
+
+An authoritive answer would have the `aa` flag in the dig answer flags.  
+We do not have this flag, and therefore we do not have an authoritve answer.
+
+## Repeat the above but use one of the nameservers obtained. What is the result? 
+
+_Using `ns3.yahoo.com`_
+
+```
+$> dig @ns3.yahoo.com yahoo.com MX
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @ns3.yahoo.com yahoo.com MX
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 5815
+;; flags: qr aa rd; QUERY: 1, ANSWER: 3, AUTHORITY: 5, ADDITIONAL: 10
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1272
+;; QUESTION SECTION:
+;yahoo.com.                     IN      MX
+
+;; ANSWER SECTION:
+yahoo.com.              1800    IN      MX      1 mta5.am0.yahoodns.net.
+yahoo.com.              1800    IN      MX      1 mta7.am0.yahoodns.net.
+yahoo.com.              1800    IN      MX      1 mta6.am0.yahoodns.net.
+
+;; AUTHORITY SECTION:
+yahoo.com.              172800  IN      NS      ns2.yahoo.com.
+yahoo.com.              172800  IN      NS      ns4.yahoo.com.
+yahoo.com.              172800  IN      NS      ns5.yahoo.com.
+yahoo.com.              172800  IN      NS      ns1.yahoo.com.
+yahoo.com.              172800  IN      NS      ns3.yahoo.com.
+
+;; ADDITIONAL SECTION:
+ns1.yahoo.com.          86400   IN      AAAA    2001:4998:130::1001
+ns2.yahoo.com.          86400   IN      AAAA    2001:4998:140::1002
+ns3.yahoo.com.          1800    IN      AAAA    2406:8600:f03f:1f8::1003
+ns5.yahoo.com.          86400   IN      AAAA    2406:2000:ff60::53
+ns1.yahoo.com.          1209600 IN      A       68.180.131.16
+ns2.yahoo.com.          1209600 IN      A       68.142.255.16
+ns3.yahoo.com.          1800    IN      A       27.123.42.42
+ns4.yahoo.com.          1209600 IN      A       98.138.11.157
+ns5.yahoo.com.          86400   IN      A       202.165.97.53
+
+;; Query time: 262 msec
+;; SERVER: 2406:8600:f03f:1f8::1003#53(2406:8600:f03f:1f8::1003)
+;; WHEN: Fri Mar 13 12:08:58 AEDT 2020
+;; MSG SIZE  rcvd: 399
+```
+
+The mail servers are `mta5.am0.yahoodns.net`, `mta6.am0.yahoodns.net`, and `mta7.am0.yahoodns.net`.
+
+We now have the `aa` flag in the answer, meaning that this was an authoritive answer.
+
+## Obtain the authoritative answer for the mail servers for Yahoo! mail. What type of DNS query is sent to obtain this information? 
+
+From the above, the mail servers (MX records) are `mta5.am0.yahoodns.net`, `mta7.am0.yahoodns.net`, `mta6.am0.yahoodns.net`.  
+A `MX` query was sent to obtain this information
+
+## Simulate an Iterative DNS Query
+
+> In this exercise you simulate the iterative DNS query process to find the IP address of your machine (e.g. lyre00.cse.unsw.edu.au). First, find the name server (query type NS) of the &apos;.&apos; domain (root domain). Query this nameserver to find the authoritative name server for the &apos;au.&apos; domain. Query this second server to find the authoritative nameserver for the &apos;edu.au.&apos; domain. Now query this nameserver to find the authoritative nameserver for &apos;unsw.edu.au&apos;. Next query the nameserver of unsw.edu.au to find the authoritative name server of cse.unsw.edu.au. Now query the nameserver of cse.unsw.edu.au to find the IP address of your host. How many DNS servers do you have to query to get the authoritative answer?
+
+Using the `wagner.orchestra.cse.unsw.edu.au` machine...
+
+|Command|Result|
+|:------|:-----|
+|`dig . NS`|`.                       195026  IN      NS      a.root-servers.net.`|
+|`dig @a.root-servers.net au. NS`|`au.                     172800  IN      NS      a.au.`|
+|`dig @a.au edu.au. NS`|`edu.au.                 86400   IN      NS      r.au.`|
+|`dig @r.au unsw.edu.au NS`|`unsw.edu.au.            900     IN      NS      ns1.unsw.edu.au.`|
+|`dig @ns1.unsw.edu.au cse.unsw.edu.au NS`|`cse.unsw.edu.au.        10800   IN      NS      beethoven.orchestra.cse.unsw.edu.au.`|
+|`dig @beethoven.orchestra.cse.unsw.edu.au orchestra.cse.unsw.edu.au NS`|`orchestra.cse.unsw.edu.au. 3600 IN      NS      beethoven.orchestra.cse.unsw.edu.au.`|
+|`dig @beethoven.orchestra.cse.unsw.edu.au wagner.orchestra.cse.unsw.edu.au`|`wagner.orchestra.cse.unsw.edu.au. 3600 IN A     129.94.242.19`|
+
+`wagner.orchestra.cse.unsw.edu.au` points to `129.94.242.19`.  
+We performed 7 queries on 6 different DNS servers to get this answer.
+
+**Trace**
+
+```
+$> dig . NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> . NS
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 29980
+;; flags: qr rd ra; QUERY: 1, ANSWER: 13, AUTHORITY: 0, ADDITIONAL: 27
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;.                              IN      NS
+
+;; ANSWER SECTION:
+.                       194644  IN      NS      i.root-servers.net.
+.                       194644  IN      NS      b.root-servers.net.
+.                       194644  IN      NS      l.root-servers.net.
+.                       194644  IN      NS      j.root-servers.net.
+.                       194644  IN      NS      d.root-servers.net.
+.                       194644  IN      NS      g.root-servers.net.
+.                       194644  IN      NS      k.root-servers.net.
+.                       194644  IN      NS      h.root-servers.net.
+.                       194644  IN      NS      m.root-servers.net.
+.                       194644  IN      NS      a.root-servers.net.
+.                       194644  IN      NS      f.root-servers.net.
+.                       194644  IN      NS      c.root-servers.net.
+.                       194644  IN      NS      e.root-servers.net.
+
+;; ADDITIONAL SECTION:
+a.root-servers.net.     285193  IN      A       198.41.0.4
+a.root-servers.net.     316986  IN      AAAA    2001:503:ba3e::2:30
+b.root-servers.net.     353811  IN      A       199.9.14.201
+b.root-servers.net.     528193  IN      AAAA    2001:500:200::b
+c.root-servers.net.     2136    IN      A       192.33.4.12
+c.root-servers.net.     32208   IN      AAAA    2001:500:2::c
+d.root-servers.net.     426837  IN      A       199.7.91.13
+d.root-servers.net.     32208   IN      AAAA    2001:500:2d::d
+e.root-servers.net.     178461  IN      A       192.203.230.10
+e.root-servers.net.     186900  IN      AAAA    2001:500:a8::e
+f.root-servers.net.     428837  IN      A       192.5.5.241
+f.root-servers.net.     32208   IN      AAAA    2001:500:2f::f
+g.root-servers.net.     347706  IN      A       192.112.36.4
+g.root-servers.net.     327320  IN      AAAA    2001:500:12::d0d
+h.root-servers.net.     286693  IN      A       198.97.190.53
+h.root-servers.net.     32208   IN      AAAA    2001:500:1::53
+i.root-servers.net.     15231   IN      A       192.36.148.17
+i.root-servers.net.     32208   IN      AAAA    2001:7fe::53
+j.root-servers.net.     35923   IN      A       192.58.128.30
+j.root-servers.net.     180794  IN      AAAA    2001:503:c27::2:30
+k.root-servers.net.     199829  IN      A       193.0.14.129
+k.root-servers.net.     185662  IN      AAAA    2001:7fd::1
+l.root-servers.net.     286910  IN      A       199.7.83.42
+l.root-servers.net.     32208   IN      AAAA    2001:500:9f::42
+m.root-servers.net.     173007  IN      A       202.12.27.33
+m.root-servers.net.     32208   IN      AAAA    2001:dc3::35
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 12:22:06 AEDT 2020
+;; MSG SIZE  rcvd: 811
+
+$> dig @a.root-servers.net au. NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @a.root-servers.net au. NS
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 43112
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 9, ADDITIONAL: 19
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;au.                            IN      NS
+
+;; AUTHORITY SECTION:
+au.                     172800  IN      NS      m.au.
+au.                     172800  IN      NS      d.au.
+au.                     172800  IN      NS      q.au.
+au.                     172800  IN      NS      t.au.
+au.                     172800  IN      NS      s.au.
+au.                     172800  IN      NS      r.au.
+au.                     172800  IN      NS      n.au.
+au.                     172800  IN      NS      a.au.
+au.                     172800  IN      NS      c.au.
+
+;; ADDITIONAL SECTION:
+m.au.                   172800  IN      A       156.154.100.24
+m.au.                   172800  IN      AAAA    2001:502:2eda::24
+d.au.                   172800  IN      A       162.159.25.38
+d.au.                   172800  IN      AAAA    2400:cb00:2049:1::a29f:1926
+q.au.                   172800  IN      A       65.22.196.1
+q.au.                   172800  IN      AAAA    2a01:8840:be::1
+t.au.                   172800  IN      A       65.22.199.1
+t.au.                   172800  IN      AAAA    2a01:8840:c1::1
+s.au.                   172800  IN      A       65.22.198.1
+s.au.                   172800  IN      AAAA    2a01:8840:c0::1
+r.au.                   172800  IN      A       65.22.197.1
+r.au.                   172800  IN      AAAA    2a01:8840:bf::1
+n.au.                   172800  IN      A       156.154.101.24
+n.au.                   172800  IN      AAAA    2001:502:ad09::24
+a.au.                   172800  IN      A       58.65.254.73
+a.au.                   172800  IN      AAAA    2407:6e00:254:306::73
+c.au.                   172800  IN      A       162.159.24.179
+c.au.                   172800  IN      AAAA    2400:cb00:2049:1::a29f:18b3
+
+;; Query time: 116 msec
+;; SERVER: 2001:503:ba3e::2:30#53(2001:503:ba3e::2:30)
+;; WHEN: Fri Mar 13 12:22:20 AEDT 2020
+;; MSG SIZE  rcvd: 571
+
+$> dig @a.au edu.au. NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @a.au edu.au. NS
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 60489
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 4, ADDITIONAL: 9
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;edu.au.                                IN      NS
+
+;; AUTHORITY SECTION:
+edu.au.                 86400   IN      NS      q.au.
+edu.au.                 86400   IN      NS      t.au.
+edu.au.                 86400   IN      NS      r.au.
+edu.au.                 86400   IN      NS      s.au.
+
+;; ADDITIONAL SECTION:
+q.au.                   86400   IN      A       65.22.196.1
+r.au.                   86400   IN      A       65.22.197.1
+s.au.                   86400   IN      A       65.22.198.1
+t.au.                   86400   IN      A       65.22.199.1
+q.au.                   86400   IN      AAAA    2a01:8840:be::1
+r.au.                   86400   IN      AAAA    2a01:8840:bf::1
+s.au.                   86400   IN      AAAA    2a01:8840:c0::1
+t.au.                   86400   IN      AAAA    2a01:8840:c1::1
+
+;; Query time: 161 msec
+;; SERVER: 2407:6e00:254:306::73#53(2407:6e00:254:306::73)
+;; WHEN: Fri Mar 13 12:22:30 AEDT 2020
+;; MSG SIZE  rcvd: 275
+
+$> dig @r.au unsw.edu.au NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @r.au unsw.edu.au NS
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 15654
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 3, ADDITIONAL: 6
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;unsw.edu.au.                   IN      NS
+
+;; AUTHORITY SECTION:
+unsw.edu.au.            900     IN      NS      ns2.unsw.edu.au.
+unsw.edu.au.            900     IN      NS      ns1.unsw.edu.au.
+unsw.edu.au.            900     IN      NS      ns3.unsw.edu.au.
+
+;; ADDITIONAL SECTION:
+ns1.unsw.edu.au.        900     IN      AAAA    2001:388:c:35::1
+ns2.unsw.edu.au.        900     IN      AAAA    2001:388:c:35::2
+ns1.unsw.edu.au.        900     IN      A       129.94.0.192
+ns2.unsw.edu.au.        900     IN      A       129.94.0.193
+ns3.unsw.edu.au.        900     IN      A       192.155.82.178
+
+;; Query time: 20 msec
+;; SERVER: 2a01:8840:bf::1#53(2a01:8840:bf::1)
+;; WHEN: Fri Mar 13 12:22:39 AEDT 2020
+;; MSG SIZE  rcvd: 198
+
+$> dig @ns1.unsw.edu.au cse.unsw.edu.au NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @ns1.unsw.edu.au cse.unsw.edu.au NS
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 44014
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 2, ADDITIONAL: 5
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;cse.unsw.edu.au.               IN      NS
+
+;; AUTHORITY SECTION:
+cse.unsw.edu.au.        10800   IN      NS      maestro.orchestra.cse.unsw.edu.au.
+cse.unsw.edu.au.        10800   IN      NS      beethoven.orchestra.cse.unsw.edu.au.
+
+;; ADDITIONAL SECTION:
+beethoven.orchestra.cse.unsw.edu.au. 10800 IN A 129.94.172.11
+beethoven.orchestra.cse.unsw.edu.au. 10800 IN A 129.94.208.3
+beethoven.orchestra.cse.unsw.edu.au. 10800 IN A 129.94.242.2
+maestro.orchestra.cse.unsw.edu.au. 10800 IN A   129.94.242.33
+
+;; Query time: 4 msec
+;; SERVER: 2001:388:c:35::1#53(2001:388:c:35::1)
+;; WHEN: Fri Mar 13 12:22:48 AEDT 2020
+;; MSG SIZE  rcvd: 164
+
+$> dig @beethoven.orchestra.cse.unsw.edu.au orchestra.cse.unsw.edu.au NS
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @beethoven.orchestra.cse.unsw.edu.au orchestra.cse.unsw.edu.au NS
+; (3 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 57788
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;orchestra.cse.unsw.edu.au.     IN      NS
+
+;; ANSWER SECTION:
+orchestra.cse.unsw.edu.au. 3600 IN      NS      beethoven.orchestra.cse.unsw.edu.au.
+orchestra.cse.unsw.edu.au. 3600 IN      NS      maestro.orchestra.cse.unsw.edu.au.
+
+;; ADDITIONAL SECTION:
+maestro.orchestra.cse.unsw.edu.au. 3600 IN A    129.94.242.33
+beethoven.orchestra.cse.unsw.edu.au. 3600 IN A  129.94.242.2
+
+;; Query time: 0 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 12:23:02 AEDT 2020
+;; MSG SIZE  rcvd: 132
+
+$> dig @beethoven.orchestra.cse.unsw.edu.au wagner.orchestra.cse.unsw.edu.au 
+
+; <<>> DiG 9.9.5-9+deb8u18-Debian <<>> @beethoven.orchestra.cse.unsw.edu.au wagner.orchestra.cse.unsw.edu.au
+; (3 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 43276
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 2, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;wagner.orchestra.cse.unsw.edu.au. IN   A
+
+;; ANSWER SECTION:
+wagner.orchestra.cse.unsw.edu.au. 3600 IN A     129.94.242.19
+
+;; AUTHORITY SECTION:
+orchestra.cse.unsw.edu.au. 3600 IN      NS      beethoven.orchestra.cse.unsw.edu.au.
+orchestra.cse.unsw.edu.au. 3600 IN      NS      maestro.orchestra.cse.unsw.edu.au.
+
+;; ADDITIONAL SECTION:
+maestro.orchestra.cse.unsw.edu.au. 3600 IN A    129.94.242.33
+beethoven.orchestra.cse.unsw.edu.au. 3600 IN A  129.94.242.2
+
+;; Query time: 1 msec
+;; SERVER: 129.94.242.2#53(129.94.242.2)
+;; WHEN: Fri Mar 13 12:23:18 AEDT 2020
+;; MSG SIZE  rcvd: 155
+```
+
+## Can one physical machine have several names and/or IP addresses associated with it? 
+
+Yes, a machine can have several hostnames / DNS names associated with it.  
+Additionally, a machine can have several IP addresses (i.e. several network cards on the same machine).
+
+
+# A Simple Web Server
+
+File: [WebServer.py](./aSimpleWebServer/WebServer.py)
+
+week04
+---
+title: "Lab 04 - Exploring TCP"
+date: 2020-03-29T22:09:58+11:00
+
+hiddenFromHomePage: false
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams: 
+  enable: false
+  options: ""
+
+---
+
+# Exercise 1: Understanding TCP using Wireshark
+
+File: [tcp-ethereal-trace-1](./tcp-ethereal-trace-1)
+
+## What is the IP address of gaia.cs.umass.edu?
+
+`gaia.cs.umass.edu` has an IP address of `128.119.245.12`.
+
+## On what port number is it sending and receiving TCP segments for this connection?
+
+The server is using port `80` for its communication.  
+
+## What is the IP address and TCP port number used by the client computer (source) that is transferring the file to gaia.cs.umass.edu?
+
+The source computer has an IP address of `192.168.1.102`, and is using port `1161`
+
+## What is the sequence number of the TCP segment containing the HTTP POST command?
+
+> Note that in order to find the POST command, you’ll need to dig into the packet content field at the bottom of the Wireshark window, looking for a segment with a “POST” within its DATA field. 
+
+Sequence number `232129013` (Packet #4) is the TCP segment which contains the POST command
+
+## Consider the TCP segment containing the HTTP POST as the first segment in the TCP connection.  
+
+* What are the sequence numbers of the first six segments in the TCP connection (including the segment containing the HTTP POST) sent from the client to the web server?
+  * Do not consider the ACKs received from the server as part of these six segments.
+* At what time was each segment sent?  
+* When was the ACK for each segment received?  
+* Given the difference between when each TCP segment was sent, and when its acknowledgement was received, what is the RTT value for each of the six segments? 
+* What is the EstimatedRTT value (see relevant parts of Section 3.5 or lecture slides) after the receipt of each ACK?
+  * Assume that the initial value of EstimatedRTT is equal to the measured RTT ( SampleRTT ) for the first segment, and then is computed using the EstimatedRTT equation for all subsequent segments.
+  * Set alpha to 0.125
+
+|#|Seq no|Time Sent|Time ACKd|ACK #|Sample RTT|Estimated RTT|Packet Length|Payload Length|
+|--:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+|4|`232129013`|0.026|0.053|6|0.027|0.027|619|565|
+|5|`232129578`|0.041|0.077|9|0.036|0.028|1514|1460|
+|7|`232131038`|0.054|0.124|12|0.070|0.04|1514|1460|
+|8|`232132498`|0.056|0.169|13|0.113|0.049|1514|1460|
+|10|`232133958`|0.077|0.217|15|0.140|0.0.06|1514|1460|
+|11|`232135418`|0.078|0.267|16|0.189|0.07|1514|1460|
+
+Note: The Estimated RTT can be calculated from the formula:  
+`eRTT = (1-a) * last_eRTT + a * sampleRTT`
+
+## What is the length of each of the first six TCP segments? 
+
+See above.
+
+## What is the minimum amount of available buffer space advertised at the receiver for the entire trace? 
+
+Packet #2 suggests that the minimum amount of buffer space available is `5840` (Calculated window size).  
+
+## Does the lack of receiver buffer space ever throttle the sender?
+
+No, the sender sends at most only 1514 bytes at a time, which is under the minimum buffer space
+
+## Are there any retransmitted segments in the trace file? What did you check for (in the trace) in order to answer this question?
+
+We can look for repeated segment numbers (seq and ack pair) to find if there are any segments that were retransmitted.  
+No repeated segment numbers were found, so we can assume that there are **no retransmitted segments**.
+
+## How much data does the receiver typically acknowledge in an ACK? 
+
+> Can you identify cases where the receiver is ACKing every other received segment (recall the discussion about delayed acks from the lecture notes or Section 3.5 of the text). 
+
+Typically the receiver acknowledges `1460` bytes.  
+
+There is a case where packets 54, 55 and 56 are all acknowledged by the single ACK packet 60.  
+This may happen if all three packets arrive simultaneously, and so there is no need to acknowledge each received packet.
+
+## What is the throughput (bytes transferred per unit time) for the TCP connection?  
+
+We can get the throughput of this connection by calculating the sequence number delta, and dividing it by the time delta.  
+
+Note: We will look at the POST exchange from segment 4 to segment 206, and ignore the beginning connection setup.
+
+### To calculate size: sequence number delta
+
+The start of the data is segment 4 - seq no 232129013.  
+The end of the server response is segment 206 - seq no 232293103.
+
+There were 232293103 - 232129013 = 164090 bytes transmitted
+
+### To calculate time: delta
+
+Segment 4 was transmitted at 0.026s.  
+Segment 206 was transmitted at 5.6511s.
+
+The time delta is 5.6511 - 0.026 = 5.557 seconds.
+
+### To calculate throughput
+
+164090 bytes / 5.557 seconds is `29528.52 bytes/second`
+
+# Exercise 2: TCP Connection Management 
+
+![](Screen_Shot_2018-08-28_at_8.06.30_pm.png)
+
+## What is the sequence number of the TCP SYN segment that is used to initiate the TCP connection between the client computer and server?
+
+`2818463618`
+
+## What is the sequence number of the SYNACK segment sent by the server to the client computer in reply to the SYN?
+
+`1247095790`
+
+### What is the value of the Acknowledgement field in the SYNACK segment? How did the server determine that value?  
+
+The acknowledge number is `2818463619`.  
+
+The server determines it to be the `SYN value + 1`.  
+Hence `2818463618 + 1 = 2818463619`
+
+## What is the sequence number of the ACK segment sent by the client computer in response to the SYNACK?
+
+`2818463619`
+
+### What is the value of the Acknowledgment field in this ACK segment? Does this segment contain any data? 
+
+`1247095791`
+
+_Which is `1247095790 + 1`_
+
+It doesn't contain any user data
+
+## Who has done the active close - client or the server?
+
+* How you have determined this?
+* What type of closure has been performed?
+  * 3 Segment (FIN/FINACK/ACK)
+  * 4 Segment (FIN/ACK/FIN/ACK)
+  * Simultaneous close
+
+The client initiated the active close as seen by segment 304.  
+Segment 305 is a response to the active close, as seen by the acknowledgement of sequence number 2818463652 (segment 304).  
+
+This looks like a `simultaneous close`, as the server sends its own FINACK before it receives the client's FINACK (FINACK from the server has an acknowledgement number of the packet that it will (but hasn't yet) receive from the client).
+
+|Handshake Close|Simultaneous Close|
+|:--:|:--:|
+|![](http://www.tcpipguide.com/free/diagrams/tcpclose.png)|![](http://www.tcpipguide.com/free/diagrams/tcpclosesimul.png)|
+
+## How many data bytes have been transferred from the client to the server and from the server to the client during the whole duration of the connection?  
+
+> What relationship does this have with the Initial Sequence Number and the final ACK received from the other side?  
+
+The `final ACK - initial seq number` is equal to the number of bytes transferred.
+
+`2818463653 - 2818463618 = 35` bytes
+
+
+week05
+---
+title: "Lab 05 - TCP Congestion Control and Fairness"
+date: 2020-04-05T18:36:40+10:00
+
+hiddenFromHomePage: false
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams: 
+  enable: false
+  options: ""
+
+---
+
+# Exercise 0: Revision of TCP Congestion Control
+
+![](tcp_cc.jpg)
+
+## Name the loss events that occur at 1 and 2. Explain why the congestion window is changed differently in those two cases.  
+
+At 1: Duplicate ACK received - Window halved - Improves throughput  
+At 2: Timeout - Try again from start
+
+## What phase of the TCP congestion control algorithm coincides with the circled segment marked by 3 and 4?  
+
+At 3: Slow Start (exponential increase)  
+At 4: AIMD (linear increase)
+
+## Why is the congestion window increased more rapidly at 3 than at 4?
+
+(3) increases at an exponential rate.
+
+## What happens to the window after 2?
+
+The slow start algorithm starts again
+
+# Exercise 1: Understanding TCP Congestion Control using ns-2
+
+**Using TCP Tahoe...**
+
+File: [tpWindow.tcl](tpWindow.tcl)  
+Usage: `ns tpWindow.tcl <max_cwnd> <link_delay>`
+
+File: [Window.plot](Window.plot)  
+Usage: `gnuplot Window.plot`
+
+> Run the script with the max initial window size set to 150 packets and the delay set to 100ms (be sure to type "ms" after 100).  
+In other words, type the following: `ns tpWindow.tcl 150 100ms`
+&nbsp;  
+> Then plot it with `gnuplot Window.plot`
+
+![](Screenshot from 2020-04-05 18-59-23.png)
+
+## What is the maximum size of the congestion window that the TCP flow reaches in this case?
+
+The maximum size is `100`.
+
+## What does the TCP flow do when the congestion window reaches this value? Why? What happens next?
+
+When the congestion window reaches 100, the congestion window is set back to zero and the threshold is halved to 50 - the initial value where the TCP phase changes from a slow start algorithm to the AIMD (additive-increase / multiplicative-decrease) algorithm; so that the connection is kept in the congestion avoidance phase after a loss event.  
+
+After the congestion window size is set to zero, it begins to increase again (Slow Start) until it reaches 50; where the algorithm changes to AIMD.  
+
+## Calculate the average throughput (in packets/sec and bps)  
+
+File: [WindowTPut.plot](WindowTPut.plot)  
+Usage: `gnuplot WindowTPut.plot`
+
+![](Screenshot from 2020-04-05 19-17-22.png)
+
+The average throughput is around `185 packets per second`.  
+
+Average throughput (bps) = `185 * (500 + 20 + 20) * 8 = 799200 bps` 
+
+## Rerun the above script, each time with different values for the max congestion window size but the same RTT (i.e. 100ms).
+
+> Find the value of the maximum congestion window at which TCP stops oscillating (i.e., does not move up and down again) to reach a stable behaviour.  
+
+|150|100|60|51|**50**|49|40|
+|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+|![](Screenshot from 2020-04-05 19-33-59.png)|![](Screenshot from 2020-04-05 19-50-08.png)|![](Screenshot from 2020-04-05 19-30-07.png)|![](Screenshot from 2020-04-05 19-24-31.png)|![](Screenshot from 2020-04-05 19-25-20.png)|![](Screenshot from 2020-04-05 19-25-06.png)|![](Screenshot from 2020-04-05 19-29-50.png)|
+
+The maximum stable congestion window size is `50`.
+
+### How does TCP respond to the variation of this parameter?
+
+Increasing the congestion window size past 100 results in no change to the graph, hence we can assume there are negligible effects to what happens to the connection.
+
+As the congestion window size decreases, less packet loss is experiences, and at a window size of 50, no packet loss occurs, and TCP stops oscillating.
+
+### What is the average throughput (in packets and bps) at this point?
+
+At a congestion window size of 50, the average throughput is around `225 packets per second`, or `225 * (500 + 20 + 20) * 8 = 972000 bps`
+
+### How does the actual average throughput compare to the link capacity (1Mbps)?  
+
+At the average throughput rate at a window size of 50, the link is 97.2% utilised
+
+# Exercise 1b: Using TCP Reno
+
+> Create a congestion window graph and throughput graph for TCP Reno, using a max window size of 150, and delay of 150ms.  
+
+![](Screenshot from 2020-04-05 19-51-04.png)
+
+![](Screenshot from 2020-04-05 19-51-49.png)
+
+## What is the maximum size of the congestion window that the TCP flow reaches in this case?
+
+100
+
+## What does the TCP flow do when the congestion window reaches this value? Why? What happens next?
+
+The window size is decreased to half, but not zero (TCP Reno only goes to zero when there is a timeout or three duplicate ACKs), it then drops to one afterwards and then enters a slow start and into the AIMD phase.
+
+## Calculate the average throughput (in packets/sec and bps)  
+
+Average throughput is roughly `200 packets per sec`, which is `864000 bps`
+
+## Compare the graphs for the two implementations and explain the differences.
+
+> Hint: compare the number of times the congestion window goes back to zero in each case
+
+|TCP Tahoe|TCP Reno|
+|:-------:|:------:|
+|![](Screenshot from 2020-04-05 18-59-23.png)|![](Screenshot from 2020-04-05 19-51-04.png)|
+|![](Screenshot from 2020-04-05 19-17-22.png)|![](Screenshot from 2020-04-05 19-51-49.png)|
+|Avg: 185 pkts/s|Avg: 200 pkts/s|
+|Avg: 799200 bps|Avg: 864000 bps|
+
+* Both implementations of congestion control reach the maximum congestion window size of 100.
+* Both implementations of congestion control, at some point, fill up the buffer queue.
+* Both implementations of congestion control oscillate
+* TCP Tahoe has large recorded dips in instantaneous throughput - TCP Reno dips in instantaneous throughput by much less
+* The congestion window size in TCP Tahoe goes to zero 7 times, while only once with TCP Reno
+* TCP Reno has a higher average throughput of 200 packets per second than TCP Tahoe (185 packets per second)
+
+# Exercise 2: Flow Fairness with TCP 
+
+File: [tp_fairness.tcl](tp_fairness.tcl)  
+Usage: `ns tp_fairness.tcl`
+
+File: [fairness_pkt.plot](fairness_pkt.plot)  
+Usage: `gnuplot fairness_pkt.plot`
+
+![](Screenshot from 2020-04-05 20-08-26.png)
+
+## Does each flow get an equal share of the capacity of the common link (i.e., is TCP fair)?
+
+> Explain which observations lead you to this conclusion.
+
+Each share **does** get an equal share of the capacity of the link.  
+We can deduce this as all of the lines of the graph are closely clustered together.
+
+In more detail, at `t=0` to `t=5s`, flow (2-3) is the sole activity in the link, and having 100% of the link capacity, we can assume the capacity of the link to be the recorded throughput of around 120 packets per second.  
+
+After _t=25s_, the average lines for all of the flows vary around the throughput rate of around 25.  
+Dividing 120 packets per second by 5 flows, `120 / 5 = 24 packets per second` per flow.  
+
+Hence, as each flow has an average throughput (~25 packets per second) around this equally portioned capacity (24 packets per second), we can conclude that each flow gets an equal share of capacity, and that TCP is fair.
+
+## What happens to the throughput of the pre-existing TCP flows when a new flow is created? Explain the mechanisms of TCP which contribute to this behaviour. Argue about whether you consider this behaviour to be fair or unfair. 
+
+**Note: Modifying the number of flows from 5, to 10**
+
+![](Screenshot from 2020-04-05 20-26-58.png)
+
+* When a new flow is created, the throughput of other existing flows are negatively affected (throughput decreases).  
+* Some flows are unable to transmit, as seen by the throughput rate being recorded at 0 packets per second.  
+* Each flow no longer has an average throughput of the previous 24 pkts/s, rather they now have an average throughput of around 16 pkts/s
+* As the number of flows increase, the average throughput will decrease.  
+
+TCP packets may be purposely dropped to allow packets to be received from other nodes.  
+
+This behaviour can be considered **fair to the new flow** (everyone - including the new flow - is able to transmit, even if only a little bit), **but unfair to existing flows** (throughput decreases).
+
+# Exercise 3: TCP competing with UDP
+
+File: [tp_TCPUDP.tcl](tp_TCPUDP.tcl)  
+Usage: `ns tp_TCPUDP <link_capacity>`
+
+File: [TCPUDP_pps.plot](TCPUDP_pps.plot)  
+Usage: `gnuplot TCPUDP_pps.plot`
+
+## How do you expect the TCP flow and the UDP flow to behave if the capacity of the link is 5 Mbps?
+
+* TCP packets will assess the current free capacity of the link and rate control its packets.
+* UDP packets will dominate the link capacity, and will bombard the link without considering its rate.
+* UDP packets will be sent at a much faster rate than TCP packets will.
+
+## Test your hypothesis
+
+> Run the command: `ns tp_TCPUDP.tcl 5Mb` and `gnuplot TCPUDP_pps.plot`
+
+![](Screenshot from 2020-04-05 20-53-13.png)
+
+The <span style="color:red">RED</span> packets can be identified as UDP packets, as they are transmitted continuously in masses.  
+The <span style="color:blue">BLUE</span> packets can be identified as TCP packets, as they are transmitted sparingly.
+
+![](Screenshot from 2020-04-05 20-49-37.png)
+
+Yep. UDP packets are being sent out, with throughput in the range of 900-1100 pkts/s.  
+TCP packets are only being transmitted at an average rate of around 130 pkts/s.
+
+## Why does one flow achieve higher throughput than the other? Try to explain what mechanisms force the two flows to stabilise to the observed throughput. 
+
+The TCP protocol implements congestion control, using its slow start and AIMD algorithms to find a stable transmission rate. The UDP protocol however, does not implement rate controlling, and hence it does not care about congestion in the link, and simply fires as many packets as it can; regardless if the link is full or not. This is why UDP packets are being transmitted at a higher throughput than the TCP packets.
+
+Factors contributing towards the stabilisation of the throughput for the flows (rather than there being an infinite throughput), is the size of the transmission buffer, and the rate at which data can be modulated and transmitted over the wire.
+
+## List the advantages and the disadvantages of using UDP instead of TCP for a file transfer, when our connection has to compete with other flows for the same link. What would happen if everybody started using UDP instead of TCP for that same reason? 
+
+### Advantages | UDP for file transfer
+
+* Higher throughput (more data transmitted)
+* Doesn't consider other activity in the network, so doesn't limit the rate of transmission ("priority")
+* Fast!
+
+### Disadvantages | UDP for file transfer
+
+* Packets may not be sent
+* Packets may be lost
+* No bit error correction - packet needs to be retransmitted
+* Will need to implement a structure to manage the order of file segments
+* Will need to implement a structure to manage which file segments have [not] been received ([n]ACK)
+
+---
+
+If everyone used UDP instead of TCP, we would run into a lot of packet loss.  
+The link will probably still be heavily utilised, but many more packets will be dropped from each user, and the individual throughput of each user will decrease
+
+
+lab06
+---
+title: "Lab 06 - Throughput, IP Fragmentation and Routing"
+date: 2020-04-12T21:18:52+10:00
+
+hiddenFromHomePage: false
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams: 
+  enable: false
+  options: ""
+
+---
+
+# Exercise 1: Setting up NS2 simulation for measuring TCP throughput
+
+* File: [exercise2.tcl](./exercise2.tcl)
+* File: [throughput.plot](./throughput.plot)
+
+![](Picture1.png)
+
+* FTP/TCP Source n0 -> TCP Sink n5 : start time: 0.5 sec End time: 8.5 sec
+* FTP/TCP Source n3 -> TCP Sink n5 : start time: 2.0 sec End time: 9.5 sec
+* FTP/TCP Source n7 -> TCP Sink n0 : start time: 3.0 sec End time: 9.5 sec
+* FTP/TCP Source n7 -> TCP Sink n3 : start time: 4.0 sec End time: 7.0 sec 
+
+|nam|gnuplot|
+|:---:|:---:|
+|![](Screenshot from 2020-04-12 23-41-57.png)|![](Screenshot from 2020-04-12 23-50-52.png)|
+
+
+## Why is the throughput achieved by flow tcp2 higher than tcp1 between time span 6 sec to 8 sec?
+
+![](Screenshot from 2020-04-13 00-04-06.png)
+_Visualisation of traffic at 6-8s_
+
+* TCP1 flows from 0-1, 1-2, 2-4, 4-5
+* TCP2 flows from 3-2, 2-4, 4-5
+* TCP3 flows from 7-6, 6-1, 1-0
+* TCP4 flows from 7-6, 6-1, 1-2, 2-3
+
+***<u>NOTE: I am only considering the 2.5Mbps links as there are no issues on the 10Mbps links...</u>***
+
+At the time span from 6 to 8 seconds, TCP1 must share the link bandwidth of 1-2 with TCP4
+It must also share the link bandwidth of 2-4 with TCP2
+
+At the time span from 6 to 8 seconds, TCP2 only needs to share the link bandwidth of 2-4 with TCP1.
+
+* The RTT for TCP1 is `2 x (10 + 40 + 40 + 10) = 200ms`  
+* The RTT for TCP2 is `2 x (10 + 40 + 10) = 120ms`  
+
+As RTT2 has a lower RTT, it is allocated a higher portion of the bandwidth, hence the throughput achieved by flow TCP2 is higher
+
+## Why is the throughput for flow tcp1 fluctuating between time span 0.5 sec to 2 sec?
+
+At the time span from 0.5 to 2 seconds, flow TCP1 is performing the TCP Slow Start mechanism to check the available bandwidth
+
+## Why is the maximum throughput achieved by any one flow capped at around 1.5Mbps? 
+
+The maximum throughput is the capacity of the smallest link - in this case 2.5Mbps.  
+As TCP1 performs a Slow Slart algorithm, by the time it reaches a window of 1.5Mbps, TCP2 starts its activity; which prevents TCP1 from acquiring any further bandwidth.
+
+Hence flow TCP1, and the other flows will never be able to utilise 2.5Mbps on their own, and are capped at 1.5Mbps
+
+# Exercise 2: Understanding IP Fragmentation
+
+File: [ip_frag.pcapng](./ip_frag.pcapng)
+
+## Which data size has caused fragmentation and why?
+
+![](Screenshot from 2020-04-13 00-32-41.png)
+
+The data size of 2000 bytes (and consequently 3000 bytes) has caused fragmentation, as the default MTU for an Ethernet frame is 1500 bytes.  
+As the packet was larger than the MTU, it was split up.
+
+### Which host/router has fragmented the original datagram?
+
+The source (`192.168.1.103`) fragmented the original datagram.
+
+### How many fragments have been created when data size is specified as 2000?
+
+`2 fragments` were created for each ping with data sizes of 2000 bytes.  
+
+For example, packet 16 and packet 17.  
+Whilst only packet 16 says "Fragmented IP Protocol", packet 17 is the other fragment, which gets combined.  
+
+## Did the reply from the destination 8.8.8.8. for 3500-byte data size also get fragmented? Why or why not?
+
+Yes, the reply for the ping of 3500 byte data size was also fragmented (into 3), as all packets must adhere to the Ethernet MTU of 1500 bytes.
+
+i.e. packets 42, 43 and 44
+
+## Give the ID, length, flag and offset values for all the fragments of the first packet sent by 192.168.1.103 with data size of 3500 bytes?
+
+![](Screenshot from 2020-04-13 00-47-07.png)
+
+***<u>NOTE: Length is given by the payload length (ICMP data)</u>***
+
+|Packet Number|`ip.id`|IP Length|Payload Length|Flag|Offset|
+|:---:|:---:|:---:|:---:|:---:|:---:|
+|39|0x7a7b|1500|1480|More Fragments|Fragment offset 0|
+|40|0x7a7b|1500|1480|More Fragments|Fragment offset 185|
+|41|0x7a7b|568|548|-|Fragment offset 370|
+
+## Has fragmentation of fragments occurred when data of size 3500 bytes has been used? Why and why not?
+
+No, fragments were not re-fragmented.  
+
+It is the sender's responsibility to split the original packet into the right fragment sizes that are at most 1500 bytes long.  
+Therefore fragments will not be refragmented
+
+## What will happen if for our example one fragment of the original datagram from 192.168.1.103 is lost? 
+
+If one fragment is lost, all fragments will need to be retransmitted.
+
+<!-- "If any fragment of a packet is lost, the reassembly will timeout and the entire set of fragments needs to be sent again. Timeouts vary, 15 seconds is suggested to start with."
+
+http://users.cis.fiu.edu/~vince/cgs4285/class13.html -->
+
+# Exercise 3: Understanding the Impact of Network Dynamics on Routing 
+
+File: [tp_routing-step1.tcl](./tp_routing-step1.tcl)  
+File: [tp_routing-step2.tcl](./tp_routing-step2.tcl)  
+File: [tp_routing-step3.tcl](./tp_routing-step3.tcl)  
+File: [tp_routing-step4.tcl](./tp_routing-step4.tcl)  
+File: [tp_routing-step5.tcl](./tp_routing-step5.tcl)  
+
+![](Screen_Shot_2016-09-06_at_5.43.33_PM.png)
+
+## Which nodes communicate with which other nodes? Which route do the packets follow? Does it change over time? 
+
+* Node 0 communicates with Node 5 via 0-1-4-5
+* Node 2 communicates with Node 5 via 2-3-5
+
+The route doesn't change over the duration of the simulation
+
+## What happens at time 1.0 and at time 1.2? Does the route between the communicating nodes change as a result of that?  
+
+At time 1.0s, the link 1-4 is disabled - the data coming from node 0 is lost, as the data is not rerouted nor retransmitted.  
+
+At time 1.2s, the link 1-4 is enabled - the data coming from node 0 is passed along to node 4 and then to node 5.  
+
+Node 2's communication to Node 5 remains unaffected throughout the simulation
+
+## Did you observe any additional traffic when rtproto was set to DV? How does the network react to the changes that take place at time 1.0 and time 1.2 now? 
+
+> As the simulation starts, node 0 sends out some data to node 1.  
+A short while after node 2 sends out some data to node 1 and node 3.  
+&nbsp;  
+Nodes 1 then transmits some data to nodes 0 and 4,  
+and node 3 transmits some data to node 5 and 2.
+&nbsp;  
+Each node then transmits some data along each of its links.
+
+This occurs frequently.
+
+At time 1.0s, when link 1-4 is disabled, this behaviour is also seen.  
+The network reacts by rerouting the packets from 0-1-4-5 to 0-1-2-3-5.  
+
+At time 1.2s, link 1-4 is enabled, and routes the packets from node 0 back to the original path of 0-1-4-5.
+
+## When the cost of link 1-4 is set to 3, how does this change affect the routing? Explain why. 
+
+All of the packets sent from node 0 are no longer routed through node 4, but instead follow the path 0-1-2-3-5.  
+This is because node 1 has decided that it is cheaper to get to node 5 via 1-2-3-5 (cost = 3), rather than 1-4-5 (cost = 4).
+
+## When the cost of link 1-4 is set to 2, and link 3-5 is set to 3, describe what happens and deduce the effect of `Node set multiPath_ 1`
+
+Data from node 0 travels to node 5 via the route 0-1-4-5.  
+Data from node 2 travels to node 5 via alternating routes 2-3-5 (first), then 2-1-4-5.
+
+* When the cost of link 1-4 is 2; route 2-1-4-5 will have a cost of 4.  
+* When the cost of link 3-5 is 3; route 2-3-5 will have the same cost of 4.
+
+The `Node set multiPath_ 1` option allows nodes to load balance their traffic unto multiple routes, such as what node 2 is doing.
+
+lab07
+---
+title: "Lab 07 - NAT, Ethernet and ARP"
+date: 2020-04-19T16:13:11+10:00
+
+hiddenFromHomePage: false
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams: 
+  enable: false
+  options: ""
+
+---
+
+# Exercise 1: Understanding NAT using Wireshark
+
+File: [NAT_home_side.pcap](./NAT_home_side.pcap)  
+File: [NAT_ISP_side.pcap](./NAT_ISP_side.pcap)
+
+## What is the IP address of the client?
+
+`192.168.1.100`
+
+## At time 7.109267 (#56), what are the source and destination IP addresses and TCP source and destination ports on the IP datagram carrying this HTTP GET? 
+
+![](Screenshot from 2020-04-19 16-55-41.png)
+
+Source: `192.168.1.100:4335`  
+Destination: `64.233.169.104:80`
+
+## At what time is the corresponding 200 OK HTTP message received from the Google server?  
+
+At `7.158797` seconds (packet #60) is received.  
+
+Source: `64.233.169.104:80`  
+Destination: `192.168.1.100:4335`  
+
+The reply to the request is sent back to the client.
+
+## At what time is the client-to-server TCP SYN segment sent that sets up the connection used by the GET sent at time 7.109267? What are the source and destination IP addresses and source and destination ports for the TCP SYN segment? 
+
+At `7.075657` seconds (packet #53), the SYN segment is sent.  
+
+Source: `192.168.1.100:4335`  
+Destination: `64.233.169.104:80`
+
+## What are the source and destination IP addresses and source and destination ports of the ACK sent in response to the SYN. At what time is this SYN/ACK received at the client?
+
+The SYN/ACK is received at `7.108986` seconds (packet #54)
+
+Source: `64.233.169.104:80`  
+Destination: `192.168.1.100:4335`  
+
+## At what time does the GET request appear in the NAT_ISP_side trace file? 
+
+The GET request appears at `6.069168` seconds (packet #85)
+
+## What are the source and destination IP addresses and TCP source and destination ports on the IP datagram carrying this HTTP GET message (as recorded in the NAT_ISP_side trace file)?
+
+![](Screenshot from 2020-04-19 17-07-54.png)
+
+Source: `71.192.34.104:4335`  
+Destination: `64.233.168.104:80`
+
+### Which of these fields are the same, and which are different, than in your answer to Question 2 above? 
+
+The source port, destination IP and destination port have remained the same.  
+The source IP, however, has changed from `192.168.1.100` to `71.192.34.104` (WAN address).
+
+### Are any fields in the HTTP GET message changed?
+
+No, the HTTP layer has remained the same
+
+## Which of the following fields in the IP datagram carrying the HTTP GET are changed: Version, Header Length, Flags, Checksum.
+
+> If any of these fields have changed, give a reason (in one sentence) stating why this field needed to change. 
+
+* Version has remained the same (Version 4)
+* Header Length has remained the same (20 bytes)
+* Flags have remained the same (0x4000)
+* Checksum has CHANGED (0xa94a to 0x022f)
+  * As the source IP has changed, a new checksum had to be calculated; hence the checksums will differ
+
+## In the NAT_ISP_side trace file, at what time is the first 200 OK HTTP message received from the Google server?
+
+The first 200 OK HTTP message transmitted by the Google server (64.233.169.104) was at `6.117570` seconds (Packet #90).
+
+## What are the source and destination IP addresses and TCP source and destination ports on the IP datagram carrying this HTTP 200 OK message? Which of these fields are the same, and which are different than your answer to Question 3 above? 
+
+Source: `64.233.168.104:80`  
+Destination: `71.192.34.104:4335`
+
+The source port, source IP and destination port have remained the same.  
+The destination IP, however, has changed from `192.168.1.100` to `71.192.34.104` (WAN address).
+
+## In the NAT_ISP_side trace file, at what time were the client-to-server TCP SYN segment and the server-to-client TCP SYN/ACK segment corresponding to the segments in Question 4 and 5 above captured? 
+
+The SYN segment was captured at `6.035475` seconds (Packet #82).  
+The SYN/ACK segment was captured at `6.067775` seconds (Packet #83).
+
+## What are the source and destination IP addresses and source and destination ports for these two segments (TCP SYN and TCP SYN/ACK)? 
+
+> Which of these fields are the same, and which are different than your answer to Question 4 and 5 above? 
+
+### TCP SYN
+
+Source: `71.192.34.104:4335`  
+Destination: `64.233.168.104:80`  
+
+Ports are the same, source IP address has changed
+
+### TCP SYN/ACK
+
+Source: `64.233.168.104:80`  
+Destination: `71.192.34.104:4335`
+
+Ports are the same, destination IP address has changed
+
+## The discussion on NAT in the Week 7 lecture slide No 80 shows the NAT translation table used by a NAT router. Using your answers to the questions above, fill in the NAT translation table entries for the HTTP connection considered in the questions above. 
+
+From the home side NAT router:
+
+|Local IP|Local Port|WAN IP|WAN Port|
+|:------:|:--------:|:----:|:------:|
+|192.168.1.100|4335|71.192.34.104|4335|
+
+# Exercise 2: Using Wireshark to understand Ethernet 
+
+File: [ethernet-ethereal-trace-1](./ethernet-ethereal-trace-1)
+
+## What is the 48-bit Ethernet address of the source host of the HTTP GET message packet? 
+
+`00:d0:59:a9:3d:68`
+
+## What is the 48-bit destination address in the Ethernet frame? Is this the Ethernet address of gaia.cs.umass.edu?
+
+> If not, then which device has this address?  
+> Note: this is an important question, and one that students sometimes get wrong. You may want to refer back to relevant parts of the text and lecture notes and make sure you understand the answer here.
+
+`00:06:25:da:af:73`
+
+This is **NOT** the Ethernet address of the server that hosts the website gaia.cs.umass.edu.  
+Rather, this is the Ethernet MAC address of the Linksys brand router that is serving requests for that host.  
+
+## Give the hexadecimal value for the two-byte Frame type field. 
+
+`0x0800` (IPv4)
+
+## How many bytes from the very start of the Ethernet frame does the ASCII &apos;G&apos; in &apos;GET&apos; appear in the Ethernet frame?  
+
+> Note that when you examine the Data portion of this frame, it actually consists of both the Ethernet frame headers as well as the payload (i.e. bottom window in Wireshark shows the entire 686 byte frame that is captured).  
+
+The ASCII "G" in "GET" is the 55th byte (Byte number 54, starting from 0).  
+
+### Of the bytes preceding the G, the first few bytes are the Ethernet frame header.  
+
+> Does this include the preamble bytes, or are those bytes omitted from the capture?  
+Given this, how many bytes of frame header are present? 
+
+The preamble bytes are omitted from the capture.  
+Nothing in the "Frame" section is shown in the bottom window.  
+
+### What are the remainder of the bytes before the G?
+
+* Byte 0-13: Ethernet
+* Byte 14-33: IP  
+* Byte 34-53: TCP
+
+## What is the value of the Ethernet source address in the HTTP response? Is this the address of the host that sent the GET HTTP request, or of gaia.cs.umass.edu? If not then which device has this address?
+
+In packet #16...
+
+The Ethernet source address is `00:06:25:da:af:73`, which is the address of the Linksys router that the gaia server is behind.  
+
+## What is the destination address in the Ethernet frame? Is this the Ethernet address of the source host that sent the earlier GET HTTP request? 
+
+The destination MAC address is `00:d0:59:a9:3d:68`, which is the ethernet address of the source host that send the GET request.
+
+# Exercise 3: Using Wireshark to understand ARP
+
+RFC826: [Link](https://www.rfc-editor.org/rfc/rfc826.txt)  
+ARP Protocol Information: [Link](https://erg.abdn.ac.uk/users/gorry/course/inet-pages/arp.html)
+
+## What are the hexadecimal values for the source and destination addresses in the Ethernet frame containing the ARP request message? Is there something special about the destination address?
+
+Source: `00:d0:59:a9:3d:68`  
+Destination: `ff:ff:ff:ff:ff:ff` - This is a broadcast address which all devices will receive.  
+
+## Give the hexadecimal value for the two-byte Ethernet Frame type field
+
+`0x0806` (ARP)
+
+## How many bytes from the very beginning of the Ethernet frame does the ARP opcode field begin?  
+
+The 2-byte opcode starts at the 21st byte (bytes 20-21)
+
+## What is the value of the opcode field within the ARP-payload part of the Ethernet frame in which an ARP request is made? 
+
+`ares_op$REQUEST = 1 = 0x0001` 
+
+## Does the ARP request message contain the IP address of the sender?
+
+Yes, the ARP request message contains the sender's MAC address (00:d0:59:a9:3d:68) and IP address (192.168.1.105).
+
+## Where in the ARP request does the &apos;question&apos; (IP address for which the mapping is being requested) appear?  
+
+![](Screenshot from 2020-04-19 17-58-53.png)
+
+The requested IP appears on the last 4 bytes of the ARP request (bytes 38-41 of the frame)
+
+## How many bytes from the very beginning of the Ethernet frame does the ARP reply opcode field begin? 
+
+The 2-byte opcode starts at the 21st byte (bytes 20-21)
+
+## What is the value of the opcode field within the ARP-payload part of the Ethernet frame in which an ARP response is made? 
+
+`ares_op$REPLY = 2 = 0x0002`
+
+## Where in the ARP message does the &apos;answer&apos; to the earlier ARP request appear – the Ethernet address of the machine whose corresponding IP address is being queried?
+
+The answer (Ethernet address 00:06:25:da:af:73) appears in the ARP frame (Bytes 22-27), but also in the Ethernet frame (Bytes 6-11)
+
+## What are the hexadecimal values for the source and destination addresses in the Ethernet frame containing the ARP reply message? 
+
+Source: `00:06:25:da:af:73`  
+Destination: `00:d0:59:a9:3d:68`
+
+
+mid term exam
+---
+title: "Mid-semester Exam"
+date: 2020-05-06T17:14:57+10:00
+
+hiddenFromHomePage: true
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams: 
+  enable: false
+  options: ""
+
+---
+
+# In DHT, a hash function converts
+
+a. 32-bit IP addresses into 4-bit node identifiers  
+**b. A string of ASCII characters to an integer X**  
+c. 7-bit ASCII characters to 8-bit ASCII characters  
+d. Real numbers to integer numbers  
+
+# Suppose 3 packets arrive simultaneously to a link at which no packets are currently being transmitted or queued. Each packet of length 250 bytes and the link has transmission rate 2Mbps. What is the average queuing delay for the three packets?
+
+a. 3ms  
+**b. 1ms**  
+c. 2ms  
+d. None of these  
+
+> (0t + 1t + 2t) / 3 = 1t
+
+# Suppose that a webpage has four referenced objects all residing on the same server. How many RTTs the client will have to wait to see all objects on the page if it uses non-persistent HTTP?
+
+a. 12  
+**b. 10**  
+c. 9  
+d. 8  
+
+> Webpage: Connection + request = 2 RTT  
+> Resource: Connection + request = 2 RTT  
+> Webpage + 4x Resource = 10 RTT
+
+# Suppose that a webpage has four referenced objects all residing on the same server. How many RTTs the client will have to wait to see all objects on the page if it uses persistent HTTP with pipelining?
+
+**a. 3**  
+b. 1  
+c. 4  
+d. 2  
+
+> Webpage: Connection + request = 2 RTT  
+> 4x Resources (persistent + pipelining): 1 RTT
+> Webpage + 4x Resource = 3 RTT
+
+# A DNS resource record has “cse.unsw.edu.au” for the name field and “dns.cse.unsw.edu.au” for the value field. The type field is likely to contain which of the following texts?
+
+a. A  
+b. CNAME  
+c. MX  
+**d. NS**  
+
+> NS records indicate the authoritative servers for a domain
+
+# An enterprise LAN that is connected to the Internet using a gateway. The average request rate from the enterprise browsers to the Internet origin servers is 15/sec and the average object size is 100 Kbits. If the gateway has a 1.5 Mbps access link, what is the traffic intensity at the access link?
+
+a. 10%  
+**b. 100%**  
+c. 15%  
+d. None of these  
+
+> 15 requests a second * 100 Kbits = 1500 Kbits / second = 1.5 Mbps
+
+# A UDP socket is uniquely identified by
+
+a. a 2-tuple consisting of a destination IP address and a source port number  
+**b. a 2-tuple consisting of a destination IP address and a destination port number**  
+c. a 4-tuple consisting of a source IP address, a destination IP address, a source port number, and a destination port number  
+d. a 2-tuple consisting of a source IP address and a destination port number
+
+> I would argue it should be _a 2-tuple consisting of a **source** IP address and a **source** port number_
+
+# A TCP socket is uniquely identified by
+
+a. a 4-tuple consisting of a source IP checksum, a destination IP checksum, a source port number, and a destination port number  
+b. None of these  
+c. a 2-tuple consisting of a destination IP address and a destination port number  
+**d. a 4-tuple consisting of a source IP address, a destination IP address, a source port number, and a destination port number**  
+
+# UDP is better suited (compared to TCP) for which of the following applications?
+
+a. Applications involving short query and responses, such as DNS  
+**b. All of these**  
+c. Video on demand  
+d. Teleconferencing  
+
+> All of the above choices would benefit from UDP's stateless and ACK-less protocol
+
+# Which of the following statements is not true?
+
+**a. It is not possible for an application to have reliable data transfer when using UDP**  
+b. It is possible for an application to have reliable data transfer when using UDP  
+c. Applications are expected to enjoy reliable data transfer when using TCP  
+d. Both TCP and UDP uses checksum to detect bit errors  
+
+> Application-level UDP reliability
+
+# Host A sends a 256-byte TCP segment carrying a sequence number of 200 to Host B. Host B receives it correctly and sends an ACK to Host A. What is the acknowledgement number in the ACK?
+
+a. 455  
+b. 201  
+**c. 456**
+d. None of these
+
+> ACK contains the next byte number ready to be received.  
+> Host A sends 256 bytes (#200 to #255) to Host B
+
+# Which of the following statements is true?
+
+**a. With Fast Retransmit, TCP would retransmit after receiving three Duplicate ACKs**  
+b. TCP would retransmit as soon as it receives a NAK.  
+c. TCP would retransmit if it receives the same ACK twice.  
+d. TCP would never retransmit unless there is a timeout.
+
+
+# TCP uses flow control to ensure that the
+
+a. Internet does not get congested  
+b. sender’s buffer does not overflow  
+**c. receiver’s buffer does not overflow**  
+d. None of these  
+
+# Two hosts located at two ends of a continent are trying to transfer data using a window-based (for pipelining purposes) reliable transport protocol. Suppose that the one-way propagation delay between the hosts is 15 millisec. If the hosts are using packets of length 1500 bytes over a 1 Gbps transmission link, how big the window size has to be for the channel utilization to be greater than 98%?
+
+**a. Approximately 2,500 packets**  
+b. Approximately 500 packets  
+c. Approximately 20,000 packets  
+d. Approximately 10,000 packets  
+
+> L = 1500 bytes  
+> R = 1 Gbps  
+> d_prop = 15 ms = d/s  
+> `window size = U * (R/L*RTT + 1) = 0.98 * (10^9/8 / 1500 * 2*0.015 + 1) = 2450.98`  
+
+# What is the maximum size of a file that can be transmitted over a TCP connection without exhausting the TCP sequence numbers?
+
+a. Approximately 100 MB  
+**b. Approximately 4.2 GB**  
+c. Approximately 4 MB  
+d. Approximately 4.9 GB  
+
+> The sequence number is 4 bytes long, so 4x 8 bits = 32 bits  
+> 2^32 = 4294967296 bytes = 4 GB
+
+# To speed up file transfers, a Go-back-N implementation uses a window size of 3. The sequence number field in the packet header must have at least
+
+a. 4 bits  
+b. 1 bit  
+c. 3 bits  
+**d. 2 bits**  
+
+> For GBN - `window size < 2^m`  
+> 3 </ 2^1  
+> 3 < 2^2
+
+# For a 8-bit sequence number field in the packet header, the maximum window size for Selective Repeat is
+
+a. 256  
+b. 32  
+**c. 128**  
+d. 64  
+
+> For SR - `window size < 2^(m-1)  
+> 2^(8-1) == 2^7 = 128  
+
+# A TCP sender sets its retransmission timeout interval to 500 ms. If the estimated deviation of RTT from the estimated RTT is 10 ms, what was the value of estimated RTT?
+
+a. 450 ms  
+b. 400 ms  
+**c. 460 ms**  
+d. 490 ms  
+
+> `eRTT = ?`  
+> `devRTT = 10 ms`  
+> `Timeout = 500ms`
+>  
+> `Timeout = eRTT + 4x devRTT`  
+> `500ms = eRTT + 40ms`  
+> `eRTT = 460ms`
+
+# A TCP Sender maintains an EstimatedRTT of 100 ms and a DevRTT of x ms. What value of x would cause the timeout interval to remain unchanged (neither increase nor decrease) if the next SampleRTT is 108 ms?
+
+a. 11  
+b. 10  
+c. 9  
+**d. 8**  
+
+> `eRTT = 100`  
+> `devRTT = x`  
+> `sampleRTT = 108`  
+>  
+> `new_eRTT = (0.875 * 100) + (0.125 * 108)`  
+> `new_eRTT = 101ms`  
+> `new_devRTT = (0.75 * x) + (0.25 * (108-101))`  
+> `new_devRTT = 0.75x + 1.75`  
+>  
+> `old_timeout = 100 + 4x`  
+> `new_timeout = 101 + 4 * new_devRTT`  
+> `new_timeout = 101 + 4 * (0.75x + 1.75)`  
+> `new_timeout = 108 + 3x`  
+>  
+> `old_timeout = new_timeout`  
+> `100 + 4x = 108 + 3x`  
+> `x = 8`  
+
+# Which of the following statement is NOT true?
+
+**a. To protect against SYN Flooding attack, a TCP receiver must create a connection state as soon as it receives a SYN packet.**  
+b. TCP implements a 3-way handshake for establishing new connections  
+c. At connection set up, TCP always negotiates an initial sequence number  
+d. TCP can no longer send data after it has sent a FIN packet  
+
+
+
+quiz question
+---
+title: "Quiz Questions"
+date: 2020-05-06T12:26:52+10:00
+
+hiddenFromHomePage: false
+postMetaInFooter: false
+
+flowchartDiagrams:
+  enable: false
+  options: ""
+
+sequenceDiagrams:
+  enable: false
+  options: ""
+---
+
+# What is meant by the term statistical multiplexing?
+
+Opposed to circuit switching - dedicated bandwidth per user; statistical multiplexing allows multiple users to utilise the same link, with proportioned bandwidths
+
+[Read](../switching/#statistical-multiplexing)
+
+# Consider two hosts, A and B, connected by a single link of rate R bps.
+
+> Suppose that the two hosts are separated by m meters, and suppose the propagation speed along the link is s meters/sec.  
+> Host A is to send a packet of size L bits to Host B.
+
+## Express the propagation delay, d_prop in terms of m and s.
+
+`d_prop = m / s`
+
+_Remember: Only <u>processing delay</u> and <u>transmission delay</u> are affected by packet size_
+
+[Read](../delay/#d-prop-propagation-delay)
+
+## Determine the transmission time of the packet, d_trans in terms of L and R.
+
+`d_trans = L / R`
+
+## Ignoring the processing and queuing delays, obtain an expression for the end-to-end delay.
+
+`delay = d_prop + d_trans`  
+`delay = m/s + L/R`
+
+## Suppose Host A begins to transmit the packet at time t=0. At time t=dtrans, where is the last bit of the packet?
+
+About to leave Host A.
+
+_Remember: The transmission delay is the time it takes for the device to push it onto the link_
+
+## Suppose d_prop is greater than d_trans. At time t=d_trans, where is the first bit of the packet?
+
+Somewhere on the link
+
+## Suppose d_prop is less than d_trans. At time t=d_trans, where is the first bit of the packet?
+
+At host B
+
+# It takes a single bit ten times longer to propagate over a 10Mb/s link than over a 100Mb/s link. True or False?
+
+Propagation -> `d_prop = m/s`.  
+Megabits/s is a measure of bandwidth; so the propagation speed is not affected.
+
+Hence False
+
+# Suppose users share a 1Mbps link. Also suppose each user requires 100 Kbps when transmitting, but each user transmits only 10 percent of the time.
+
+## When circuit switching is used, how many users can be supported?
+
+10 users can be supported, by partitioning the bandwidth into ten 100 Kbps links
+
+## Suppose packet switching is used for the rest of the problem. Find the probability that a given user is transmitting.
+
+Statistically from the question: "10 percent of the time".
+
+`p = 0.1`
+
+## Suppose there are 40 users. Find the probability that at any given time, exactly n users are transmitting simultaneously.
+
+> Note: You should simply express this as an expression rather than computing the exact probability value
+
+Binomial probability: `40Cn * 0.1^n * 0.9^(40-n)`
+
+# Suppose there is exactly one packet switch between a sending host and the receiving host...
+
+> Assume that the transmission speed of the links between the sending host and the switch and the switch and the receiving host are R1 and R2 respectively.  
+> Assuming that the switch uses store-and-forward packet switching, what is the total end-to-end delay to send a packet of length L?  
+> Ignore queuing, propagation and processing delays.
+
+`d_trans_1 = L/R1`  
+`d_trans_2 = L/R2`
+
+`d_lay (hahahahaha...) = L/R1 + L/R2`
+
+# Consider sending a large file of F bits from Host A to Host B.
+
+> There are two links (and one router) between A and B, and the links are uncongested (that is, no queuing delays). Host A segments the file into segments of S bits each and adds 40 bits of header to each segment, forming packets of L=40+S bits. Each link has a transmission rate of R bps. Find the value of S that minimizes the delay of moving the file from Host to Host B. Disregard propagation delay.
+
+A -> Router -> B
+
+- `L = 40+S`
+- Time for packets to arrive = `L/R * (F/S + 1)`
+
+- First packet takes `2*L/R` to arrive (over two links)
+- Each packet then arrives `L/R` time after
+
+- Derivative (dS) --> `S = sqrt(40*F)`
+
+# End-to-End Arguments in System Design
+
+> This question is centered around the fundamental paper "End-to-end Arguments in System Design" which is available [here](http://web.mit.edu/Saltzer/www/publications/endtoend/endtoend.pdf) - Saltzer
+
+> Consider that we wish to implement a reliable file transfer protocol.  
+> A. One approach is to make each step of the file transfer reliable and string them together to make the end-to-end process reliable.
+>
+> B. The other approach is to not worry about implementing reliability along each step but rather to make use of an end-to-end check (simple error detection at the receiver followed by feedback to the sender) and retransmit if necessary.
+>
+> Which approach would you pick and why?
+
+For a **reliable file transfer protocol**, where all packets must arrive correctly, Approach A would be better, as to the application, only valid data needs to be parsed and processed on. However, there will be more work for the OS kernel, which may delay the operation and activities of other tasks.
+
+Approach B would be good for a more universal protocol, where applications have the choice to discard or attempt to correct or use the imperfect packets.
+
+# Consider the figure below for which there is an institutional network connected to the Internet
+
+> Suppose that the average object size is 900,000 bits and that that the average request rate from the institution’s browsers to the origin server is 1.5 requests per second.  
+> Suppose that the amount of time it takes from when the router on the Internet side of the access link forwards an HTTP request until it receives the response in two seconds on average.  
+> Model the total average response time as the sum of the average access delay and the average Internet delay.  
+> For the average access delay, use `A/(1-AB)` where A is the average time required to send an object over the access link and B is the arrival rate of objects to the access link.  
+> You can assume that the HTTP request messages are negligibly small and thus create no traffic on the network or the access link.
+
+![](cache.png)
+
+
+`B = 1.5 requests/second`  
+Average of 900000*1.5 = 1350000 bits per second being transferred
+
+`delay_response = delay_access + delay_internet`  
+`delay_access = A/(1-AB) = L/R / (1 - BL/R)`  
+`delay_internet = 2 seconds`
+
+## Find the total average response time?
+
+...
+
+## Now suppose a cache is installed in the institutional LAN. Suppose the cache hit rate is 0.4. Find the total response time.
+
+`delay_response = 0.4 * tc + 0.6 * (delay_access + delay_internet)`  
+
+Where `tc` is a negligible time for the cache to be hit and return a response
+
+# Among the following, in which case would you get the greatest improvement in performance with persistence HTTP as compared to non-persistence HTTP? 
+
+**a) Low throughput network paths (irrespective of distance)**  
+b) High throughput network paths (irrespective of distance)  
+c) Long distance network paths (irrespective of throughput)  
+d) High throughput, short-distance network paths  
+e) High throughput, long-distance network paths
+
+> The longer the distance, the longer a connection will take to establish.  
+> The smaller the throughput, the more connections would need to be created.  
+
+
+# DNS Delays
+
+> Suppose within your Web browser you click on a link to obtain a web page.  
+> The IP address for the associated URL is not cached in your local host, so a DNS lookup is necessary to obtain the IP address.  
+> Suppose that `n` DNS servers are visited before your host receives the IP address from DNS and that iterative queries are used.  
+> Let the successive visits to the DNS servers incur an RTT of RTT1, ..., RTTn.  
+> Further suppose that the webpage associated with the link contains exactly one object, consisting of a small amount of HTML text.  
+> Let RTT0 denote the RTT between the local host and the server containing the object.  
+> Assuming zero transmission time of the object, how much time elapses from when the client clicks on the link until the client receives the object?
+
+Given that the client does not have the entry cached, and that there is no local DNS cache.
+
+Best Case scenario - The first DNS server has the entry.  
+Time = (Query to DNS server 1 + Answer) + TCP Connection Setup + Request = RTT1 + 2x RTT0
+
+Worst Case Scenario - The last DNS server has the entry.  
+Time = (Query to DNS server 1 + Answer) + (Query to DNS server 2 + Answer) + ... + (Query to DNS server n + Answer) + TCP Connection Setup + Request = RTT1 + RTT2 + ... + RTTn + 2x RTT0
+
+
+---
+
+# Week One
+
+## Q1. Packet switching, instead of circuit switching, is generally used to transfer data in the Internet.
+
+**True** or False?
+
+## Q2. Propagation delay depends on the size of the packet.
+
+True or **False**?
+
+## Q3. Which of the following delays is significantly affected by the load in the network?
+
+A. Processing delay  
+**B. Queuing delay**  
+C. Transmission delay  
+D. Propagation delay  
+
+> A packet can only transmit if the network has capacity to carry the packet, otherwise it will wait.
+
+## Q4. Consider a packet that has just arrived at a router. What is the correct order of the delays encountered by the packet until it reaches the next-hop router?
+
+A. Transmission, processing, propagation, queuing  
+B. Propagation, processing, transmission, queuing  
+**C. Processing, queuing, transmission, propagation**  
+D. Queuing, processing, propagation, transmission  
+
+> Process -> Queue -> Transmit -> Propagate
+
+## Q5. As an application developer, what measure would you take to reduce the total delay involved in transferring image files across the Internet?  
+
+_Hint: You do not have control on the core of the network i.e., route taken, bandwidth etc._  
+
+Image compression and encoding
+
+## Q6. Is it possible to increase the upstream data rate while using ADSL? If yes how? 
+
+Yes, allocate more bandwidth to the upstream
+
+# Week 2
+
+## Q1. In the Internet, which layer has only one choice of protocol
+
+A. Physical  
+**B. Network**  
+C. Transport  
+D. Application  
+
+> For Internet usage, the Ethernet protocol is the only allowed network protocol.
+
+## Q2. Which layer is NOT implemented in Internet routers
+
+A. Physical  
+B. Data link  
+C. Network  
+**D. Transport**  
+
+## Q3. Do a quick search on the Internet on "firewall" (some information about firewall is also available in your text on page 376, 7th Ed., for example). Why do you think that firewall violates the layering principle?
+
+It looks at the type of Transport and Application layer protocol.  
+i.e. Deep Packet Inspection (DPI)
+
+## Q4. Find about about "TCP Splitting" from the Internet. Your text also contains some information about TCP Splitting on page 303, 7th Ed., for example. What is the motivation for TCP Splitting to break the layering principle?
+
+> Extra TCP connections are made between hops, in hopes to achieve lower RTTs.
+
+A. Security  
+B. Performance in terms of reducing the packet header size  
+**C. Performance in terms of reducing the end-to-end delay**  
+D. Performance in terms of reducing the queueing delay in the routers  
+
+## Q5. Network applications run on
+
+A. network core devices, such as routers and switches  
+**B. end hosts, such as smartphones and desktops**  
+C. access routers or gateways, such as wireless routers  
+D. all of the above  
+
+> "Software routers" that have network applications, are considered to be end-hosts themselves when viewed for their applications.  
+> But then there's DPI inspection ... which we don't include in the scope of this course
+
+## Q6. If two processes on the same machine want to communicate with each other, they 
+
+A. must send messages to each other  
+**B. do not have to send messages to each other, but can simply share some common memory space within the same machine**  
+C. must use TCP  
+D. could use FTP  
+
+> IPC!
+
+## Q7. The client process must use a well-known port number for its socket.  
+
+True or **False**?
+
+> Ports are arbitrary, however some ports are commonly used as a standard.
+
+## Q8. Client-Server architecture can only be implemented with TCP at the transport layer.
+
+True or **False**?
+
+## Q9. HTTP belongs to
+
+A. Transport layer  
+**B. Application layer**  
+C. Network layer  
+D. Physical layer  
+
+# Q10. To send the number 256, HTTP will consume  
+
+A. 1 byte  
+B. 2 bytes  
+**C. 3 bytes**  
+D. 4 bytes  
+
+> HTTP sends all data as ASCII -> hence 256 is sent as `32` `35` `36`.
+
+## Q11. We could achieve some of the things achieved with cookies today if HTTP was 'stateful' (i.e., NOT stateless)
+
+**True** or False?
+
+## Q12. If SMTP only allows 7-bit ASCII, how do we send pictures/videos/files via email?
+
+A. We use a different protocol instead of SMTP  
+**B. We encode these objects as 7-bit ASCII**  
+C. We’re really sending links to the objects, rather than the objects themselves  
+D. We don't!! You have been lied to!! :) 
+
+## Q13. Which of the following is NOT true?
+
+A. HTTP is pull-based, SMTP is push-based  
+B. HTTP uses a separate header for each object, SMTP uses a multipart message format  
+C. SMTP uses persistent connections  
+**D. HTTP uses client-server communication but SMTP does not**  
+
+# Week 3
+
+## Q1. If a local name server has no clue about where to find the address for a hostname then
+
+A. Server asks its adjacent name server  
+**B. Server asks its root name server**  
+C. Request is not processed  
+D. Server explodes  
+
+## Q2. Which of the following is an example of a Top Level Domain?
+
+A. yoda.jedi.starwars.com  
+B. jedi.starwars.com  
+C. starwars.com  
+**D. .com**  
+
+## Q3. A web browser needs to contact www.cse.unsw.edu.au. The minimum number of DNS requests sent is:
+
+**A. 0**  
+B. 1  
+C. 2  
+D. 3  
+
+> Caching!
+
+## Q4. The role of the CDN provider’s authoritative DNS name server in a content distribution network basically is
+
+A. to provide an alias address for each browser access to the "origin server" of a CDN website  
+**B. to map the query for each CDN object to the CDN server closest to the requestor (browser)**  
+C. to provide a mechanism for CDN “origin servers” to provide paths for clients (browsers)  
+D. none of the above, CDN networks do not use DNS  
+
+## Q5. When web-based email is used, two mail servers communicate with each other using HTTP.
+
+True or **False**?
+
+## Q6. P2P networks must have servers to help new peers find other peers.
+
+True or **False**?
+
+> Not a necessity, consider circular DHT where a peer is known.
+
+## Q7. P2P networks must maintain trackers to help new peers join the network.
+
+True or **False**?
+
+> Not a necessity, consider circular DHT where a peer is known.
+
+## Q8. The 'rarest first' is a P2P networking policy to select
+
+A. the next peer to download chunks from  
+**B. the next chunk to download**  
+C. the tracker to query for other peers  
+D. the file to download  
+
+## Q9. The 'rarest first' policy helps
+
+A. download precious files  
+B. download chunks that no other peers have  
+**C. duplicate chunks in the P2P network so even if a peer disappears, other peers will contain the chunks**  
+D. remove chunks from the network that are rarely used  
+
+## Q10. In BitTorrent, Peer A will never send chunks to Peer B if Peer B is not in Peer A's top 4 list.
+
+True or **False**?
+
+## Q11. In DHT, a hash function converts
+
+A. an integer to a real number  
+B. an a real number to an integer  
+C. an integer to a string  
+**D. a string to an integer**  
+
+## Q12. Which of the following will help address the 'peer churn' (i.e. a peer disappearing) problem?
+
+A. each peer knows its two immediate predecessors  
+B. each peer knows its two immediate successors  
+C. each peer knows its immediate successor and two immediate predecessors  
+**D. each peer knows its immediate predecessor and two immediate successors**  
+
+> ehh
+
+# Week 4
+
+## Q1. A transport layer protocol implements timer to address the loss problem. The timer cannot expire if there is no loss.
+
+True or **False**?
+
+> Packets may not be delivered in time due to network congestion
+
+## Q2. A reliable transport protocol must implement both ACK and NAK if it wants to address bit errors as well as packet loss problems.
+
+True or **False**?
+
+## Q3. Stop-and-Wait
+
+A. receiver buffers packets  
+**B. has only 1 bit for the sequence number**  
+C. requires a large sequence number space  
+D. requires more than 1 bit for the sequence number  
+
+## Q4. Stop-and-Wait cannot provide reliability.
+
+True or **False**?
+
+## Q5. For short distances, Stop-and-Wait is always efficient, but it fails to support high throughput only when the distance between the client and server is large.
+
+True or **False**?
+
+## Q6. Pipelining increases throughput (compared to stop-and-wait) linearly with the window size (number packets the sender can have in the pipeline without having to stop and wait for the ACK).  
+
+**True** or False?
+
+## Q7. In Go-Back-N, the sender window cannot be equal to the sequence number space.  
+
+**True** or False?
+
+> `size < 2^m`
+
+## Q8. For a 4-bit sequence number field in the packet header, the maximum possible window size for Selective Repeat is
+
+A. 15  
+B. 16  
+**C. 8**  
+D. 7  
+
+> `size <= 2^(m-1)`
+
+## Q9. To speed up file transfers, a Selective Repeat implementation is using a window size of 8. The sequence number field in the packet header must be at least
+
+A. 8-bit long  
+**B. 4-bit long**  
+C. 3-bit long  
+D. 16-bit long  
+
+> `size <= 2^(m-1)`  
+> `8 == 2^3 == 2^(4-1)
+
+# Week 5
+
+## Q1. TCP receiver may intentionally delay the acknowledgement of a correctly received packet.
+
+**True** or False?
+
+## Q2. A TCP receiver receives an in-order segment with expected sequence number, but it has one other segment with pending ACK. Which of the following is a possible action for this receiver if it is using the delayed ACK mechanism?
+
+A. It sends 2 ACKs one after the other  
+B. It sends 3 ACKs one after the other  
+**C. It sends one cumulative ACK acknowledging both segments**  
+D. It sends a Duplicate ACK.  
+
+> Wording abit off. Translation: It has transmitted an ACK that has not been received by the sender; so the receiver can send a cumulative ACK to account for both ACKs
+
+## Q3. TCP is never allowed to retransmit unless there is a timeout.  
+
+True or **False**?
+
+> Fast Retransmit
+
+## Q4. During slow start, congestion window increases:
+
+A. Linearly  
+**B. Exponentially**  
+C. Logarithmically  
+D. Does not grow  
+
+## Q5. Maximum segment size (MSS) refers to the number of bytes in a TCP segment including its header.  
+
+True or **False**?
+
+## Q6. A TCP connection is using an MSS=1460 bytes. At the start of slow start, how many bytes the TCP sender can transmit without having to wait for ACK?
+
+A. 1400  
+**B. 1460**  
+C. 1500  
+D. 3000  
+
+## Q7. A TCP sender could still reduce its window size even if there was no triple duplicate ACK or timeout.  
+
+**True** or False?
+
+> Receiver buffer may be full, so the receiver window in the ACK has a low value
+
+# Week 6
+
+## Q1. If a TCP implementation decided to halve its congestion window when it received triple duplicate ACK, it was a Tahoe implementation.
+
+True or **False**?
+
+> TCP Tahoe sets the congestion window to 1 for timeouts and triple duplicate ACKs.
+
+## Q2. If a TCP implementation decided to reduce its congestion window to 1 MSS when it received triple duplicate ACK, it was definitely a Tahoe implementation.  
+
+True or **False**?  
+
+> Answers say True, but a TCP Reno implementation with its congestion window set to 2 MSS would set its congestion window to 2/2 = 1 MSS on a triple duplicate ACK as well...
+
+## Q3. If a TCP implementation decided to reduce its congestion window to 1 MSS when it experienced a time out, it could be either a Tahoe or Reno (we cannot tell).
+
+**True** or False?
+
+> Both TCP Reno and Tahoe set its cwnd to 1 during a timeout
+
+## Q4. A TCP Reno would halve its congestion window upon receiving a triple duplicate ACK.
+
+**True** or False?
+
+## <s>Q5. A TCP New-Reno would halve its congestion window upon receiving a triple duplicate ACK.</s>
+
+<s>True or **False**?</s>
+
+## Q6. TCP sets a very large value for ssthresh each time it switches to slow start.
+
+True or **False**?
+
+## Q7. A router performs routing when a data packet arrives.  
+
+True or **False**?
+
+> Ehh
+
+## Q8. A router performs forwarding when a packet arrives.
+
+**True** or False?
+
+> Ehh
+
+## Q9. To perform forwarding, a router needs to perform routing first.
+
+**True** or False?
+
+> Ehh
+
+# Week 7
+
+## Q1. To perform forwarding, a router must inspect the source address in the arriving packet's header.  
+
+True or **False**?
+
+> Only the destination address needs to be known
+
+## Q2. IP packet fragmentation
+
+A. helps speed up data delivery in the Internet  
+B. cannot be avoided  
+**C. can be avoided by controlling TCP segment size based on path MTU discovery**  
+D. can be avoided by configuring the maximum transfer unit (MTU) of the underlying link layer.  
+
+## Q3. Each network interface of a host must be configured with an IP address.  
+
+**True** or False?
+
+## Q4. Two hosts connected to the same subnet can reach each other without the help of a router.
+
+**True** or False?
+
+## Q5. In the original "classful" addressing scheme, the network address part of the 32-bit IP address could have a maximum of
+
+A. 8 bits  
+B. 10 bits  
+C. 16 bits  
+**D. 24 bits**  
+
+## Q6. In today's CIDR addressing scheme, the subnet part of the 32-bit IP address
+
+A. can only have 24 bits  
+B. must be at least 8 bits long  
+C. can have maximum length of 28 bits  
+**D. can have any arbitrary length (<= 32 bit)**  
+
+## Q7. CIDR addressing scheme could work without the help of subnet masks.
+
+True or **False**?
+
+> Subnet masks are required to define the layout of the network
+
+## Q8. How many IP addresses belong to the subnet 128.119.254.0/26?
+
+A. 16  
+B. 32  
+**C. 64**  
+D. 128  
+
+> 2^(32-26) == 2^6
+
+## Q9. What are the IP addresses at the two end-points of the subnet 128.119.254.0/26?
+
+**A. 128.119.254.0 and 128.119.254.63**  
+B. 128.119.254.0 and 128.119.254.128  
+C. 128.119.254.63 and 128.119.254.128  
+D. 128.119.254.0 and 128.119.254.64  
+
+## Q10. Without DHCP, a host cannot be configured with an IP address.
+
+True or **False**?
+
+> Static IP!
+
+## Q11. From IP address, one can guess the geographic location of the device.  
+
+**True** or False?
+
+> Yes for WAN IPs
+
+## Q12. The two subnets 128.119.245.128/25 and 128.119.245.0/26 have overlapping IP addresses.  
+
+True or **False**?
+
+## Q13. One of the advantages of NAT is that the organisation can change addresses of the devices within its local network without notifying the outside world.
+
+**True** or False?
+
+## Q14. NAT violates layering principle.  
+
+**True** or False?
+
+> NAT looks at the TCP headers, even though it is in the network layer
+
+## Q15. For NAT to work, we need at least two public IP addresses.
+
+<s>True or False?</s>
+
+> What? On the host, for both networks???
+
+# Week 8
+
+## Q1. A domain is only run by a single administrator.
+
+**True** or False?
+
+> One administrative entity
+
+## Q2. A Border Router is connected to more than one ISP.  
+
+**True** or False?
+
+## Q3. Each ISP must run intra-domain routing protocols to route packets within its domain.  
+
+**True** or False?
+
+> i.e RIP protocol
+
+## Q4. In graph abstraction of communication networks, edges represent routers.  
+
+True or **False**?
+
+> Edges represent links
+
+## Q5. In graph representation of communication networks, all links must have identical costs/weights. 
+
+True or **False**?
+
+## Q6. Shortest path represents the path with minimum number of hops:
+
+**A. when all links have equal cost**  
+B. in any communication networks  
+C. when each hop has at least 1 ms of delay at minimum  
+D. when most hops are heavily loaded  
+
+# Q7. In link state routing, routers must flood the network with any changes in its links.  
+
+**True** or False?
+
+## Q8. Distance Vector scales better than Link State because it generally exchanges smaller size update packets with its neighbours.
+
+True or **False**?
+
+> Distance Vector packets are actually larger, but are transmitted less frequently
+
+## Q9. With Distance Vector routing, each router must have the knowledge of the complete network topology.
+
+True or **False**?
+
+## Q10. For a network with 10 routers, the loop in Dijkstra's algorithm will be executed:
+
+A. only once  
+B. 9 times  
+**C. 10 times**  
+D. 11 times  
+
+# Week 9
+
+## Q1. LAN address is also known as:
+
+A. TCP address  
+B. IP address  
+**C. MAC address**  
+D. Virtual address  
+
+## Q2. LAN address is usually written in:
+
+**A. Hexadecimal notation**  
+B. Binary notation  
+C. Decimal notation  
+D. in words  
+
+## Q3. ARP is used to resolve:
+
+A. the IP address of a domain name  
+B. the next hop address for an arriving packet  
+**C. the associated LAN address of an IP address**  
+D. the associated IP address of a LAN address  
+
+## Q4. A network admin is needed to configure an ARP table.  
+
+True or **False**?
+
+> ARP tables are constructed automatically, and dynamically
+
+## Q5. Which of the following is an example of link layer protocol?
+
+A. RIP  
+B. OSPF  
+**C. Ethernet**  
+D. TCP  
+
+## Q6. One of the advantages of using bus-based Ethernet is that collisions can be completely avoided.
+
+True or **False**?
+
+> Bus-based Ethernet _causes_ collisions as all devices must use the same bus/link
+
+## Q7. Switching tables in LAN switches are typically configured by network admin.  
+
+True or **False**?
+
+## Q8. In a LAN switch, packets
+
+A. are never flooded  
+B. are always flooded  
+**C. can be flooded sometimes**  
+D. are flooded only when reliable service is required  
+
+## Q9. If a LAN switch has flooded a packet, it means the switch did not know which LAN segment the packet came from.  
+
+True or **False**?
+
+> The switch will know where the packet came from.
+
+## Q10. If a LAN switch has flooded a packet, it means the switch did not know which LAN segment the packet destination is connected to.  
+
+True or **False**?
+
+> Answers say True, but - a switch can flood if the packet is a broadcast packet, if it is functioning as a hub, or if it does not have a valid route
