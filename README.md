@@ -1,2 +1,2 @@
 
-xfun::embed_file("Spec.pdf")
+[embed]Spec.pdf[embed]
